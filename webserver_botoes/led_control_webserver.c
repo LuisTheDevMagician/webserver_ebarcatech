@@ -10,8 +10,8 @@
 #include "ws2818b.pio.h"
 #include "neopixel.c"
 
-#define WIFI_SSID "Mugen"
-#define WIFI_PASSWORD "MangekyouSharingan"
+#define WIFI_SSID "NOME DA REDE WIFI"
+#define WIFI_PASSWORD "SENHA DA REDE WIFI"
 #define LED_BLUE_PIN 12
 #define LED_MATRIX_PIN 7
 #define LED_COUNT 25
@@ -116,7 +116,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
         "<p>Status da Verificação: %s</p>\n"
         "<p>Botão A: <span class='%s'>%s</span></p>\n"
         "<p>Botão B: <span class='%s'>%s</span></p>\n"
-        "<p>Temperatura da Broca: %.2f °C</p>\n"
+        "<p>Temperatura da Ponta de Solda: %.2f °C</p>\n"
         "</body>\n"
         "</html>\n";
 

@@ -1,6 +1,5 @@
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
-#include "hardware/pwm.h"
 #include "pico/cyw43_arch.h"
 #include <stdio.h>
 #include <string.h>
@@ -10,8 +9,8 @@
 #include "lwip/tcp.h"
 #include "lwip/netif.h"
 
-#define WIFI_SSID "Mugen"
-#define WIFI_SENHA "MangekyouSharingan"
+#define WIFI_SSID "NOME DA REDE WIFI"
+#define WIFI_SENHA "SENHA DA REDE WIFI"
 #define PINO_X_JOYSTICK 26
 #define PINO_Y_JOYSTICK 27
 #define PINO_BOTAO_JOYSTICK 22
@@ -19,13 +18,13 @@
 #define CANAL_ADC_Y 1
 
 typedef struct {
-    uint16_t eixo_x;
-    uint16_t eixo_y;
+    int16_t eixo_x;
+    int16_t eixo_y;
     bool botao_pressionado;
     const char* direcao;
 } EstadoJoystick;
 
-static EstadoJoystick estado_joystick = {2048, 2048, false, "Centro"};
+static EstadoJoystick estado_joystick = {0, 0, false, "Centro"};
 
 const char* obter_direcao(uint16_t x, uint16_t y) {
     const uint16_t area_morta = 400;
@@ -39,7 +38,6 @@ const char* obter_direcao(uint16_t x, uint16_t y) {
     float angulo = atan2f(rel_x, -rel_y) * 180.0f / 3.14159265f;
     if (angulo < 0) angulo += 360.0f;
 
-    // Apenas trocamos os nomes das direções para corresponder ao físico
     if (angulo >= 337.5f || angulo < 22.5f) return "Oeste";
     else if (angulo >= 22.5f && angulo < 67.5f) return "Noroeste";
     else if (angulo >= 67.5f && angulo < 112.5f) return "Norte";
@@ -53,20 +51,36 @@ const char* obter_direcao(uint16_t x, uint16_t y) {
 void ler_joystick() {
     adc_select_input(CANAL_ADC_X);
     sleep_us(2);
-    estado_joystick.eixo_x = adc_read();
-
+    uint16_t raw_x = adc_read();
+    
     adc_select_input(CANAL_ADC_Y);
     sleep_us(2);
-    estado_joystick.eixo_y = adc_read();
-
+    uint16_t raw_y = adc_read();
+    
+    int32_t centered_x = (int32_t)raw_x - 2048;
+    int32_t centered_y = (int32_t)raw_y - 2048;
+    
+    const uint16_t area_morta = 400;
+    if (abs(centered_x) < area_morta) centered_x = 0;
+    if (abs(centered_y) < area_morta) centered_y = 0;
+    
+    estado_joystick.eixo_x = (int16_t)centered_x;
+    estado_joystick.eixo_y = (int16_t)centered_y;
     estado_joystick.botao_pressionado = !gpio_get(PINO_BOTAO_JOYSTICK);
-    estado_joystick.direcao = obter_direcao(estado_joystick.eixo_x, estado_joystick.eixo_y);
+    estado_joystick.direcao = obter_direcao(raw_x, raw_y);
+}
+
+static void tcp_server_close(struct tcp_pcb *pcb) {
+    if (pcb) {
+        tcp_arg(pcb, NULL);
+        tcp_recv(pcb, NULL);
+        tcp_close(pcb);
+    }
 }
 
 static err_t receber_tcp(void *arg, struct tcp_pcb *pcb_tcp, struct pbuf *p, err_t err) {
     if (!p) {
-        tcp_close(pcb_tcp);
-        tcp_recv(pcb_tcp, NULL);
+        tcp_server_close(pcb_tcp);
         return ERR_OK;
     }
 
@@ -75,6 +89,9 @@ static err_t receber_tcp(void *arg, struct tcp_pcb *pcb_tcp, struct pbuf *p, err
         return ERR_OK;
     }
 
+    // Imprime no console quando recebe uma requisição (indica conexão ativa)
+    printf("Cliente conectado - IP: %s\n", ip4addr_ntoa(&pcb_tcp->remote_ip));
+    
     ler_joystick();
 
     const char *formato_resposta =
@@ -85,15 +102,15 @@ static err_t receber_tcp(void *arg, struct tcp_pcb *pcb_tcp, struct pbuf *p, err
         "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
         "<meta http-equiv='refresh' content='0.5'>"
         "<title>Controle de Direção de Máquina Subaquática</title></head><body>"
-        "<h1>Controle de Direção de Máquina Subaquática</h1>"
+        "<h1>Controle de Direção de Máquina de Solda Subaquática</h1>"
         "<p>X: %d (%.1f%%)</p>"
         "<p>Y: %d (%.1f%%)</p>"
         "<p>Botão: %s</p>"
         "<p>Direção: %s</p>"
         "</body></html>";
 
-    float percentual_x = (estado_joystick.eixo_x / 4095.0f) * 100.0f;
-    float percentual_y = (estado_joystick.eixo_y / 4095.0f) * 100.0f;
+    float percentual_x = (estado_joystick.eixo_x / 2048.0f) * 100.0f;
+    float percentual_y = (estado_joystick.eixo_y / 2048.0f) * 100.0f;
 
     char *resposta_html = malloc(1024);
     if (!resposta_html) {
@@ -107,8 +124,6 @@ static err_t receber_tcp(void *arg, struct tcp_pcb *pcb_tcp, struct pbuf *p, err
              estado_joystick.botao_pressionado ? "Pressionado" : "Livre",
              estado_joystick.direcao);
 
-    printf("%s\n", resposta_html);  // debug
-
     tcp_write(pcb_tcp, resposta_html, strlen(resposta_html), TCP_WRITE_FLAG_COPY);
     tcp_output(pcb_tcp);
     free(resposta_html);
@@ -118,7 +133,10 @@ static err_t receber_tcp(void *arg, struct tcp_pcb *pcb_tcp, struct pbuf *p, err
 }
 
 static err_t aceitar_conexao_tcp(void *arg, struct tcp_pcb *nova_conexao, err_t err) {
+    printf("Nova conexão estabelecida - IP: %s\n", ip4addr_ntoa(&nova_conexao->remote_ip));
+    tcp_arg(nova_conexao, NULL);
     tcp_recv(nova_conexao, receber_tcp);
+    tcp_err(nova_conexao, NULL);
     return ERR_OK;
 }
 
@@ -165,6 +183,8 @@ int main() {
     }
 
     tcp_accept(pcb, aceitar_conexao_tcp);
+
+    printf("Servidor TCP iniciado. Aguardando conexões...\n");
 
     while (true) {
         cyw43_arch_poll();
